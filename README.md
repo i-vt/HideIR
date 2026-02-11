@@ -21,4 +21,5 @@
 
 ### objdump (control flow)
 
-<img width="1668" height="1981" alt="image" src="https://github.com/user-attachments/assets/5866e1c5-348f-4431-b568-b9a906c6dbbd" />
+<img width="766" height="2058" alt="image" src="https://github.com/user-attachments/assets/df381c72-995b-4cf7-9263-4229f59fdbdc" />
+
