@@ -1,0 +1,25 @@
+global:
+  enabled: true
+  plugin_dir: "/home/user/Downloads/project/build/plugins" 
+  strip_symbols: true
+
+passes:
+  split_basic_block:
+    enabled: true
+    threshold: 3
+  flattening:
+    enabled: true
+    probability: 1.0
+  opaque_predicate:
+    enabled: true
+    probability: 0.8
+  string_encryption:
+    enabled: true
+  function_outlining:
+    enabled: true
+  anti_debugging:
+    enabled: true
+  api_hiding:
+    enabled: true
+  anti_tampering:
+    enabled: true

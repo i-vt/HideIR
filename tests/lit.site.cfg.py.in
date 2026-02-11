@@ -1,0 +1,21 @@
+import os
+
+# Set basic project metadata from CMake
+config.llvm_tools_dir = "@LLVM_TOOLS_BINARY_DIR@"
+config.project_obj_root = "@CMAKE_BINARY_DIR@"
+config.project_src_root = "@CMAKE_SOURCE_DIR@"
+
+# Capture the paths to the compiled LLVM Pass plugins.
+# Since CMake outputs all libraries to the 'plugins/' directory:
+config.split_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libSplitBasicBlockPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
+config.opaque_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libOpaquePredicatePass@CMAKE_SHARED_LIBRARY_SUFFIX@"
+config.flattening_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libFlatteningPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
+config.string_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libStringEncryptionPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
+config.outlining_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libFunctionOutliningPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
+
+# Initialize the LLVM config
+import lit.llvm
+lit.llvm.initialize(lit_config, config)
+
+# Delegate the rest of the configuration to the main lit.cfg.py in the source tree
+lit_config.load_config(config, "@CMAKE_CURRENT_SOURCE_DIR@/lit.cfg.py")
