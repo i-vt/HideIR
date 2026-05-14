@@ -12,6 +12,7 @@ pip install lit
 ```
 # Compile
 ./hideir.sh -c examples/my_config.yaml examples/main.c -o secureapp
+chmod +x secureapp
 
 # Functionality Test
 ./secureapp           # invalid licence (digits sum odd)
