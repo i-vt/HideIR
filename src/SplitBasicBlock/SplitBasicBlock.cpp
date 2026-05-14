@@ -4,14 +4,27 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "../Utils/Random.h"
+#include <cstdlib>
 #include <vector>
 
 using namespace llvm;
 
+// Read the split threshold from the HIDEIR_SPLIT_THRESHOLD environment variable,
+// set by the orchestrator from the YAML config. Defaults to 3.
+static int getSplitThreshold() {
+    if (const char *env = std::getenv("HIDEIR_SPLIT_THRESHOLD")) {
+        int val = std::atoi(env);
+        if (val > 0) return val;
+    }
+    return 3;
+}
+
 PreservedAnalyses SplitBasicBlockPass::run(Function &F, FunctionAnalysisManager &AM) {
-    if (F.empty() || F.hasFnAttribute(Attribute::OptimizeNone)) {
+    if (F.empty() || F.hasFnAttribute(Attribute::OptimizeNone) || F.getName().contains("obf.")) {
         return PreservedAnalyses::all();
     }
+
+    int threshold = getSplitThreshold();
 
     std::vector<BasicBlock *> originalBlocks;
     for (BasicBlock &BB : F) {
@@ -23,7 +36,7 @@ PreservedAnalyses SplitBasicBlockPass::run(Function &F, FunctionAnalysisManager 
         int instCount = 0;
         for (Instruction &I : *BB) { instCount++; }
 
-        if (instCount >= 3) {
+        if (instCount >= threshold) {
             int splitPoint = ObfuscatorUtils::Random::generateRandomIntInRange(1, instCount - 2);
             auto it = BB->begin();
             for (int i = 0; i < splitPoint; ++i) { ++it; }

@@ -12,6 +12,9 @@ config.opaque_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libOpaquePredicatePass@C
 config.flattening_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libFlatteningPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
 config.string_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libStringEncryptionPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
 config.outlining_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libFunctionOutliningPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
+config.anti_debug_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libAntiDebuggingPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
+config.anti_tamper_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libAntiTamperingPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
+config.api_hiding_plugin_path = "@CMAKE_BINARY_DIR@/plugins/libAPIHidingPass@CMAKE_SHARED_LIBRARY_SUFFIX@"
 
 # Initialize the LLVM config
 import lit.llvm

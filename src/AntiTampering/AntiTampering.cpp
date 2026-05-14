@@ -83,17 +83,24 @@ PreservedAnalyses AntiTamperingPass::run(Module &M, ModuleAnalysisManager &) {
     if (targets.empty())
         return PreservedAnalyses::all();
 
-    // Global expected hash
-    GlobalVariable *expectedHash = new GlobalVariable(
-        M,
-        builder.getInt32Ty(),
-        false,
-        GlobalValue::PrivateLinkage,
-        builder.getInt32(0),
-        "obf.expected_hash");
+    // ===============================
+    // Create a per-function expected hash global so each function's
+    // integrity is verified independently.
+    // ===============================
+    std::vector<GlobalVariable *> expectedHashes;
+    for (size_t i = 0; i < targets.size(); ++i) {
+        GlobalVariable *gh = new GlobalVariable(
+            M,
+            builder.getInt32Ty(),
+            false,
+            GlobalValue::PrivateLinkage,
+            builder.getInt32(0),
+            "obf.expected_hash." + targets[i]->getName().str());
+        expectedHashes.push_back(gh);
+    }
 
     // ===============================
-    // Constructor: compute baseline
+    // Constructor: compute baseline hash for every target function
     // ===============================
     FunctionType *initTy =
         FunctionType::get(Type::getVoidTy(ctx), false);
@@ -104,26 +111,36 @@ PreservedAnalyses AntiTamperingPass::run(Module &M, ModuleAnalysisManager &) {
                          "obf.tamper_init",
                          &M);
 
-    BasicBlock *initEntry =
+    BasicBlock *currentBlock =
         BasicBlock::Create(ctx, "entry", initFunc);
 
-    auto [initHash, initEnd] =
-        createHashLoop(ctx, builder, initFunc,
-                       targets[0], initEntry);
+    for (size_t i = 0; i < targets.size(); ++i) {
+        auto [initHash, initEnd] =
+            createHashLoop(ctx, builder, initFunc,
+                           targets[i], currentBlock);
 
-    IRBuilder<> initEndBuilder(initEnd);
-    initEndBuilder.CreateStore(initHash, expectedHash, true);
-    initEndBuilder.CreateRetVoid();
+        IRBuilder<> storeBuilder(initEnd);
+        storeBuilder.CreateStore(initHash, expectedHashes[i], true);
+
+        // Chain: each function's hash loop feeds into the next.
+        if (i + 1 < targets.size()) {
+            currentBlock = BasicBlock::Create(ctx, "init.next", initFunc);
+            storeBuilder.CreateBr(currentBlock);
+        } else {
+            storeBuilder.CreateRetVoid();
+        }
+    }
 
     appendToGlobalCtors(M, initFunc, 0);
 
     // ===============================
-    // Runtime checks
+    // Runtime checks: each function hashes *itself*
     // ===============================
     Function *trap =
         Intrinsic::getDeclaration(&M, Intrinsic::trap);
 
-    for (Function *F : targets) {
+    for (size_t i = 0; i < targets.size(); ++i) {
+        Function *F = targets[i];
         BasicBlock &entry = F->getEntryBlock();
         Instruction *insertPt = &*entry.getFirstInsertionPt();
 
@@ -134,16 +151,17 @@ PreservedAnalyses AntiTamperingPass::run(Module &M, ModuleAnalysisManager &) {
         // Remove default branch
         entry.getTerminator()->eraseFromParent();
 
+        // Hash this function's own bytes at runtime
         auto [runtimeHash, endBlock] =
             createHashLoop(ctx, builder, F,
-                           targets[0], &entry);
+                           F, &entry);
 
         IRBuilder<> checkBuilder(endBlock);
 
         Value *stored =
             checkBuilder.CreateLoad(
                 builder.getInt32Ty(),
-                expectedHash,
+                expectedHashes[i],
                 true);
 
         Value *valid =
@@ -173,6 +191,15 @@ PassPluginLibraryInfo getAntiTamperingPluginInfo() {
         "EnterpriseAntiTampering",
         "1.0",
         [](PassBuilder &PB) {
+            PB.registerPipelineParsingCallback(
+                [](StringRef Name, ModulePassManager &MPM,
+                   ArrayRef<PassBuilder::PipelineElement>) {
+                    if (Name == "EnterpriseAntiTampering") {
+                        MPM.addPass(AntiTamperingPass());
+                        return true;
+                    }
+                    return false;
+                });
             PB.registerPipelineStartEPCallback(
                 [](ModulePassManager &MPM,
                    OptimizationLevel) {
@@ -185,4 +212,3 @@ extern "C" LLVM_ATTRIBUTE_WEAK
 ::llvm::PassPluginLibraryInfo llvmGetPassPluginInfo() {
     return getAntiTamperingPluginInfo();
 }
-

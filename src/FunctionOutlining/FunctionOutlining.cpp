@@ -16,10 +16,21 @@ PreservedAnalyses FunctionOutliningPass::run(Function &F, FunctionAnalysisManage
         return PreservedAnalyses::all();
     }
 
-    // Do not outline functions that have already been outlined to prevent infinite loops,
-    // and skip the decryption stub from the StringEncryption pass.
-    if (F.getName().contains("obf.outlined") || F.getName().contains("obf.decrypt_strings")) {
+    // Do not outline any obfuscator-generated functions to prevent
+    // infinite loops and unnecessary processing. Uses contains() because
+    // CodeExtractor names functions as "parent.obf.outlined", not "obf.*".
+    if (F.getName().contains("obf.")) {
         return PreservedAnalyses::all();
+    }
+
+    // Skip functions that contain indirectbr (e.g., flattened functions).
+    // The flattening pass uses blockaddress + indirectbr for its dispatcher.
+    // Outlining blocks from such functions creates dangling blockaddress
+    // references, causing the indirectbr to jump to invalid memory (SIGSEGV).
+    for (BasicBlock &BB : F) {
+        if (isa<IndirectBrInst>(BB.getTerminator())) {
+            return PreservedAnalyses::all();
+        }
     }
 
     // The CodeExtractor requires DominatorTree analysis to safely compute inputs/outputs
@@ -37,6 +48,13 @@ PreservedAnalyses FunctionOutliningPass::run(Function &F, FunctionAnalysisManage
         
         // Skip Exception Handling pads, they cannot be cleanly extracted
         if (BB->isEHPad()) continue;
+
+        // Skip blocks whose address is taken (via blockaddress). The flattening
+        // pass uses blockaddress + indirectbr for its dispatcher — extracting
+        // these blocks into a separate function would create dangling
+        // blockaddress references, causing the indirectbr to jump to invalid
+        // memory (SIGSEGV).
+        if (BB->hasAddressTaken()) continue;
         
         // Collect blocks. In a pure production environment, you could tie this to a probability 
         // config variable. Here we attempt to extract all eligible blocks to maximize scattering.

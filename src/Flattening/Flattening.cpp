@@ -7,13 +7,33 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "../Utils/Random.h"
+#include <cstdlib>
 #include <vector>
 
 using namespace llvm;
 
+// Read the flattening probability from the HIDEIR_FLATTEN_PROB environment
+// variable, set by the orchestrator from the YAML config. Defaults to 1.0.
+static double getFlattenProbability() {
+    if (const char *env = std::getenv("HIDEIR_FLATTEN_PROB")) {
+        double val = std::atof(env);
+        if (val >= 0.0 && val <= 1.0) return val;
+    }
+    return 1.0;
+}
+
 PreservedAnalyses FlatteningPass::run(Function &F, FunctionAnalysisManager &AM) {
-    if (F.empty() || F.hasFnAttribute(Attribute::OptimizeNone)) {
+    if (F.empty() || F.hasFnAttribute(Attribute::OptimizeNone) || F.getName().contains("obf.")) {
         return PreservedAnalyses::all();
+    }
+
+    // Probabilistically skip this function based on the configured probability
+    double prob = getFlattenProbability();
+    if (prob < 1.0) {
+        double roll = ObfuscatorUtils::Random::generateRandomIntInRange(0, 10000) / 10000.0;
+        if (roll > prob) {
+            return PreservedAnalyses::all();
+        }
     }
 
     // 1. SSA Demotion: Required to prevent cross-block register uses in the flattened CFG.

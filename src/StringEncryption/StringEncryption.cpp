@@ -5,18 +5,25 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
-#include "llvm/Support/raw_ostream.h" // For debug printing
+#include "llvm/Support/raw_ostream.h"
 #include "../Utils/Crypto.h"
 #include "../Utils/Random.h"
 #include <vector>
 
 using namespace llvm;
 
+// Number of bytes in the rolling XOR key
+static constexpr unsigned KEY_LENGTH = 8;
+
 PreservedAnalyses StringEncryptionPass::run(Module &M, ModuleAnalysisManager &AM) {
     bool modified = false;
     LLVMContext &ctx = M.getContext();
-    std::vector<GlobalVariable *> targetStrings;
-    std::vector<uint8_t> keys;
+
+    struct EncryptedString {
+        GlobalVariable *GV;
+        std::array<uint8_t, KEY_LENGTH> key;
+    };
+    std::vector<EncryptedString> targetStrings;
 
     // Iterate through all global variables
     for (GlobalVariable &GV : M.globals()) {
@@ -34,13 +41,16 @@ PreservedAnalyses StringEncryptionPass::run(Module &M, ModuleAnalysisManager &AM
         StringRef data = CDS->getRawDataValues();
         if (data.empty() || data.size() < 4) continue; // Skip very short strings/padding
 
-        // Generate a random key for this specific string
-        uint8_t key = static_cast<uint8_t>(ObfuscatorUtils::Random::generateRandomIntInRange(1, 255));
+        // Generate a multi-byte rolling key for this specific string
+        std::array<uint8_t, KEY_LENGTH> key;
+        for (unsigned k = 0; k < KEY_LENGTH; ++k) {
+            key[k] = static_cast<uint8_t>(ObfuscatorUtils::Random::generateRandomIntInRange(1, 255));
+        }
         
-        // Perform XOR encryption
+        // Perform rolling XOR encryption
         std::vector<uint8_t> encrypted;
-        for (unsigned char c : data) {
-            encrypted.push_back(c ^ key);
+        for (size_t i = 0; i < data.size(); ++i) {
+            encrypted.push_back(static_cast<uint8_t>(data[i]) ^ key[i % KEY_LENGTH]);
         }
 
         // Replace the plaintext with encrypted data
@@ -50,8 +60,7 @@ PreservedAnalyses StringEncryptionPass::run(Module &M, ModuleAnalysisManager &AM
         // CRITICAL: Global must be mutable so the decryption stub can write to it
         GV.setConstant(false);
         
-        targetStrings.push_back(&GV);
-        keys.push_back(key);
+        targetStrings.push_back({&GV, key});
         modified = true;
     }
 
@@ -69,15 +78,15 @@ PreservedAnalyses StringEncryptionPass::run(Module &M, ModuleAnalysisManager &AM
     IRBuilder<> builder(entryBlock);
 
     for (size_t i = 0; i < targetStrings.size(); ++i) {
-        GlobalVariable *GV = targetStrings[i];
-        uint8_t key = keys[i];
+        GlobalVariable *GV = targetStrings[i].GV;
+        const auto &key = targetStrings[i].key;
         
         Type *valueType = GV->getValueType();
         if (!valueType->isArrayTy()) continue;
 
         uint64_t arrSize = valueType->getArrayNumElements();
         
-        // Decrypt the string in-place
+        // Decrypt the string in-place using the rolling key
         for (uint64_t j = 0; j < arrSize; ++j) {
             Value *idxList[] = {builder.getInt64(0), builder.getInt64(j)};
             Value *gep = builder.CreateInBoundsGEP(valueType, GV, idxList);
@@ -85,7 +94,7 @@ PreservedAnalyses StringEncryptionPass::run(Module &M, ModuleAnalysisManager &AM
             // CRITICAL FIX: Make the load and store VOLATILE (the 'true' argument).
             // This stops LLVM's GlobalOpt from statically evaluating our decryption routine!
             LoadInst *load = builder.CreateLoad(builder.getInt8Ty(), gep, true); 
-            Value *xorVal = builder.CreateXor(load, builder.getInt8(key));
+            Value *xorVal = builder.CreateXor(load, builder.getInt8(key[j % KEY_LENGTH]));
             builder.CreateStore(xorVal, gep, true);
         }
     }

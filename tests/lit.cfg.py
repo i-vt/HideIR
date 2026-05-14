@@ -14,6 +14,9 @@ config.substitutions.append(('%{opaque_plugin}', config.opaque_plugin_path))
 config.substitutions.append(('%{flattening_plugin}', config.flattening_plugin_path))
 config.substitutions.append(('%{string_plugin}', config.string_plugin_path))
 config.substitutions.append(('%{outlining_plugin}', config.outlining_plugin_path))
+config.substitutions.append(('%{anti_debug_plugin}', config.anti_debug_plugin_path))
+config.substitutions.append(('%{anti_tamper_plugin}', config.anti_tamper_plugin_path))
+config.substitutions.append(('%{api_hiding_plugin}', config.api_hiding_plugin_path))
 
 # Add LLVM tools (opt, FileCheck) to the PATH for the tests
 llvm_config.add_tool_substitutions(['opt', 'FileCheck'], config.llvm_tools_dir)

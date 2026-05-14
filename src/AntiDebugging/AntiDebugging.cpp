@@ -75,7 +75,12 @@ PreservedAnalyses AntiDebuggingPass::run(Module &M, ModuleAnalysisManager &AM) {
 
     // ==========================================
     // FEATURE 2: Cross-Platform Timing Checks
+    // Only inject on architectures where readcyclecounter lowers to a real
+    // instruction (x86 rdtsc, PPC mftb). On ARM/AArch64 and other targets
+    // without a cycle counter, LLVM lowers it to constant 0, which would
+    // make the check useless or cause false positives.
     // ==========================================
+    if (targetTriple.isX86() || targetTriple.isPPC()) {
     Function *cycleCounter = Intrinsic::getDeclaration(&M, Intrinsic::readcyclecounter);
     
     for (Function &F : M) {
@@ -120,6 +125,7 @@ PreservedAnalyses AntiDebuggingPass::run(Module &M, ModuleAnalysisManager &AM) {
             modified = true;
         }
     }
+    } // end architecture guard for timing checks
 
     return modified ? PreservedAnalyses::none() : PreservedAnalyses::all();
 }

@@ -1,0 +1,69 @@
+# ── HideIR Configuration ─────────────────────────────────────
+# Copy this file and tweak per-project. Point hideir.sh at it with:
+#   ./hideir.sh -c examples/my_config.yaml examples/main.c -o secureapp
+
+global:
+  enabled: true
+
+  # Leave empty to auto-detect (<wrapper_dir>/plugins/).
+  # Set an absolute path to override.
+  plugin_dir: ""
+
+  # Strip the symbol table from the final binary.
+  # Disable for debug builds so you can still use gdb/lldb.
+  strip_symbols: true
+
+passes:
+
+  # ── Control flow ──────────────────────────────────────────
+  # Splits large basic blocks into smaller ones, inflating the
+  # CFG and making pattern matching harder.
+  split_basic_block:
+    enabled: true
+    threshold: 4            # min instructions before a block is eligible
+
+  # Replaces structured control flow with an indirectbr dispatcher.
+  # Very effective but increases binary size. Lower the probability
+  # to flatten only a subset of functions.
+  flattening:
+    enabled: true
+    probability: 0.75       # flatten 75% of functions
+
+  # Inserts always-true conditional branches that confuse disassemblers
+  # with unreachable junk-code paths.
+  opaque_predicate:
+    enabled: true
+    probability: 0.6        # predicate 60% of eligible blocks
+
+  # Extracts basic blocks into separate noinline functions,
+  # scattering logic across the binary. Skips flattened functions
+  # automatically (indirectbr targets can't be outlined).
+  function_outlining:
+    enabled: true
+
+  # ── Data protection ───────────────────────────────────────
+  # Encrypts string constants at compile time with a rolling
+  # multi-byte XOR key. Decrypted by a global constructor at startup.
+  string_encryption:
+    enabled: true
+
+  # Replaces direct calls to external functions (printf, strcmp, …)
+  # with runtime resolution via dlsym/GetProcAddress, hiding
+  # imported symbols from static analysis.
+  api_hiding:
+    enabled: true
+
+  # ── Runtime protection ────────────────────────────────────
+  # Detects attached debuggers via ptrace/IsDebuggerPresent at
+  # startup. On x86/PPC also injects rdtsc timing checks that
+  # trap if someone is single-stepping through the code.
+  anti_debugging:
+    enabled: true
+
+  # Computes FNV-1a hashes of each function's first 64 bytes at
+  # startup, then re-verifies at every function entry. Traps if
+  # someone patches the binary.
+  #
+  # ⚠ Disable this for builds you plan to patch or hotpatch.
+  anti_tampering:
+    enabled: true

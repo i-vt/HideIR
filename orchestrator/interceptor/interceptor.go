@@ -2,6 +2,7 @@ package interceptor
 
 import (
 	"enterprise-obfuscator/logger"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -18,13 +19,16 @@ type Config struct {
 	} `yaml:"global"`
 	Passes struct {
 		SplitBasicBlock struct {
-			Enabled bool `yaml:"enabled"`
+			Enabled   bool `yaml:"enabled"`
+			Threshold int  `yaml:"threshold"`
 		} `yaml:"split_basic_block"`
 		Flattening struct {
-			Enabled bool `yaml:"enabled"`
+			Enabled     bool    `yaml:"enabled"`
+			Probability float64 `yaml:"probability"`
 		} `yaml:"flattening"`
 		OpaquePredicate struct {
-			Enabled bool `yaml:"enabled"`
+			Enabled     bool    `yaml:"enabled"`
+			Probability float64 `yaml:"probability"`
 		} `yaml:"opaque_predicate"`
 		StringEncryption struct {
 			Enabled bool `yaml:"enabled"`
@@ -62,22 +66,42 @@ func Intercept(originalArgs []string, configPath string) []string {
 		return originalArgs
 	}
 
+	// If plugin_dir is empty or not set, default to a "plugins" directory
+	// next to the wrapper binary itself.
+	if cfg.Global.PluginDir == "" {
+		execDir, _ := filepath.Abs(filepath.Dir(os.Args[0]))
+		cfg.Global.PluginDir = filepath.Join(execDir, "plugins")
+	}
+
 	isCxx := false
 	isCompiling := false
-	isLinking := true 
+	hasInputFiles := false
+	compileOnly := false
 
 	for _, arg := range originalArgs[1:] {
 		if strings.HasSuffix(arg, ".cpp") || strings.HasSuffix(arg, ".cc") {
 			isCxx = true
 			isCompiling = true
-		} else if strings.HasSuffix(arg, ".c") || arg == "-c" {
+			hasInputFiles = true
+		} else if strings.HasSuffix(arg, ".c") {
 			isCompiling = true
+			hasInputFiles = true
+		} else if strings.HasSuffix(arg, ".o") || strings.HasSuffix(arg, ".a") ||
+			strings.HasSuffix(arg, ".so") || strings.HasSuffix(arg, ".dylib") {
+			hasInputFiles = true
 		}
 		
-		if arg == "-c" || arg == "-S" || arg == "-E" {
-			isLinking = false
+		if arg == "-c" {
+			isCompiling = true
+			compileOnly = true
+		} else if arg == "-S" || arg == "-E" {
+			compileOnly = true
 		}
 	}
+
+	// Linking only happens when we have input files and are not in compile-only mode.
+	// This prevents injecting -s/-ldl on invocations like "gcc --version".
+	isLinking := hasInputFiles && !compileOnly
 
 	var newArgs []string
 	compilerName := filepath.Base(originalArgs[0])
@@ -122,6 +146,19 @@ func Intercept(originalArgs []string, configPath string) []string {
 		if cfg.Passes.AntiDebugging.Enabled { injectPlugin("AntiDebuggingPass") }
 		if cfg.Passes.APIHiding.Enabled { injectPlugin("APIHidingPass") }
 		if cfg.Passes.AntiTampering.Enabled { injectPlugin("AntiTamperingPass") }
+	}
+
+	// Pass configurable parameters to plugins via environment variables.
+	// -mllvm flags are parsed before plugins load, so cl::opt is not viable
+	// for pass-plugin options. Environment variables are read at pass runtime.
+	if cfg.Passes.SplitBasicBlock.Enabled && cfg.Passes.SplitBasicBlock.Threshold > 0 {
+		os.Setenv("HIDEIR_SPLIT_THRESHOLD", fmt.Sprintf("%d", cfg.Passes.SplitBasicBlock.Threshold))
+	}
+	if cfg.Passes.Flattening.Enabled && cfg.Passes.Flattening.Probability > 0 {
+		os.Setenv("HIDEIR_FLATTEN_PROB", fmt.Sprintf("%f", cfg.Passes.Flattening.Probability))
+	}
+	if cfg.Passes.OpaquePredicate.Enabled && cfg.Passes.OpaquePredicate.Probability > 0 {
+		os.Setenv("HIDEIR_OPAQUE_PROB", fmt.Sprintf("%f", cfg.Passes.OpaquePredicate.Probability))
 	}
 
 	if cfg.Global.StripSymbols && isLinking {

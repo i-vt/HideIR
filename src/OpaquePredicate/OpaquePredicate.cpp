@@ -2,25 +2,37 @@
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Module.h" // Required to fix 'incomplete type' error for Module
+#include "llvm/IR/Module.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "../Utils/Random.h"
+#include <cstdlib>
 #include <vector>
 
 using namespace llvm;
 
+// Read the opaque predicate probability from the HIDEIR_OPAQUE_PROB environment
+// variable, set by the orchestrator from the YAML config. Defaults to 1.0.
+static double getOpaqueProbability() {
+    if (const char *env = std::getenv("HIDEIR_OPAQUE_PROB")) {
+        double val = std::atof(env);
+        if (val >= 0.0 && val <= 1.0) return val;
+    }
+    return 1.0;
+}
+
 PreservedAnalyses OpaquePredicatePass::run(Function &F, FunctionAnalysisManager &AM) {
-    // Check if function is empty. The Attribute::OptimizeNone check is removed 
-    // to ensure obfuscation triggers even at -O0.
-    if (F.empty()) {
+    if (F.empty() || F.getName().contains("obf.")) {
         return PreservedAnalyses::all();
     }
 
     Module *M = F.getParent();
     LLVMContext &ctx = F.getContext();
     
-    // Create or retrieve a global "Key" variable used for the opaque check
+    // Create or retrieve a global "Key" variable used for the opaque check.
+    // The volatile load below is the primary defense: LLVM cannot read through
+    // a volatile access to determine the key is always 0, so it cannot prove
+    // the predicate is always true or fold away the false branch.
     GlobalVariable *key = M->getGlobalVariable("obf.opaque_key");
     if (!key) {
         key = new GlobalVariable(*M, Type::getInt32Ty(ctx), false, 
@@ -37,6 +49,13 @@ PreservedAnalyses OpaquePredicatePass::run(Function &F, FunctionAnalysisManager 
         Instruction *term = BB->getTerminator();
         // Skip blocks that don't have standard terminators (like switches or invokes)
         if (!term || isa<SwitchInst>(term) || isa<InvokeInst>(term)) continue;
+
+        // Probabilistically skip this block based on the configured probability
+        double opProb = getOpaqueProbability();
+        if (opProb < 1.0) {
+            double roll = ObfuscatorUtils::Random::generateRandomIntInRange(0, 10000) / 10000.0;
+            if (roll > opProb) continue;
+        }
 
         IRBuilder<> builder(term);
         

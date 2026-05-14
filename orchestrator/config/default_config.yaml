@@ -1,18 +1,20 @@
 global:
   enabled: true
-  plugin_dir: "/home/user/Downloads/project/build/plugins" 
+  # Leave empty to auto-detect relative to the wrapper binary (build/plugins/).
+  # Set an absolute path to override.
+  plugin_dir: ""
   strip_symbols: true
 
 passes:
   split_basic_block:
     enabled: true
-    threshold: 3
+    threshold: 3       # Minimum instructions in a block before splitting
   flattening:
     enabled: true
-    probability: 1.0
+    probability: 1.0   # Fraction of functions to flatten (0.0 - 1.0)
   opaque_predicate:
     enabled: true
-    probability: 0.8
+    probability: 0.8   # Fraction of blocks to insert opaque predicates (0.0 - 1.0)
   string_encryption:
     enabled: true
   function_outlining:
