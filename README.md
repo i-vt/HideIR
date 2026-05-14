@@ -1,6 +1,30 @@
 # HideIR
  Cross-platform LLVM-based obfuscation framework, integrating directly into the compiler pipeline. 
 
+## Getting Started
+```
+python3 -m venv venv
+source venv/bin/activate
+pip install lit
+```
+
+### Testing
+```
+# Compile
+./hideir.sh -c examples/my_config.yaml examples/main.c -o secureapp
+
+# Functionality Test
+./secureapp           # invalid licence (digits sum odd)
+./secureapp 1234      # valid licence (1+2+3+4 = 10, even)
+
+# Compare
+clang examples/main.c -o secureapp_ref -O1
+strings secureapp_ref | grep -i "hunter2\|password\|admin"   # plaintext
+strings secureapp     | grep -i "hunter2\|password\|admin"   # gone
+objdump -T secureapp_ref | grep UND    # strcmp, printf visible
+objdump -T secureapp     | grep UND    # replaced by dlsym
+```
+
  ## Features
 
  - **Control Flow Flattening** — Replaces structured control flow with an indirect-branch dispatcher, defeating static CFG recovery in IDA/Ghidra.
