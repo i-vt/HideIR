@@ -18,6 +18,10 @@ include(AddLLVM)
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
-# Delegate to the source and test directories
+# Delegate to the source directory (always required)
 add_subdirectory(src)
-add_subdirectory(tests)
+
+# Tests are optional — skip if the directory is absent (e.g. stripped builds)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
+    add_subdirectory(tests)
+endif()
