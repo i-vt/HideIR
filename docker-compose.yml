@@ -1,0 +1,19 @@
+services:
+  hideir-api:
+    build: .
+    image: hideir:latest
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      # Override the default config by mounting your own:
+      # HIDEIR_DEFAULT_CONFIG: /config/my_config.yaml
+    # volumes:
+    #   - ./my_config.yaml:/config/my_config.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
