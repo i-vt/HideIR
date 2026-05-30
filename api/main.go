@@ -20,21 +20,21 @@ import (
 
 type PassConfig struct {
 	Global struct {
-		Enabled      bool   `yaml:"enabled" json:"enabled"`
-		PluginDir    string `yaml:"plugin_dir" json:"plugin_dir,omitempty"`
+		Enabled      bool   `yaml:"enabled"       json:"enabled"`
+		PluginDir    string `yaml:"plugin_dir"    json:"plugin_dir,omitempty"`
 		StripSymbols bool   `yaml:"strip_symbols" json:"strip_symbols"`
 	} `yaml:"global" json:"global"`
 	Passes struct {
 		SplitBasicBlock struct {
-			Enabled   bool `yaml:"enabled" json:"enabled"`
-			Threshold int  `yaml:"threshold" json:"threshold,omitempty"`
+			Enabled   bool `yaml:"enabled"    json:"enabled"`
+			Threshold int  `yaml:"threshold"  json:"threshold,omitempty"`
 		} `yaml:"split_basic_block" json:"split_basic_block"`
 		Flattening struct {
-			Enabled     bool    `yaml:"enabled" json:"enabled"`
+			Enabled     bool    `yaml:"enabled"     json:"enabled"`
 			Probability float64 `yaml:"probability" json:"probability,omitempty"`
 		} `yaml:"flattening" json:"flattening"`
 		OpaquePredicate struct {
-			Enabled     bool    `yaml:"enabled" json:"enabled"`
+			Enabled     bool    `yaml:"enabled"     json:"enabled"`
 			Probability float64 `yaml:"probability" json:"probability,omitempty"`
 		} `yaml:"opaque_predicate" json:"opaque_predicate"`
 		StringEncryption struct {
@@ -58,23 +58,16 @@ type PassConfig struct {
 // ─── Request / Response types ─────────────────────────────────────────────────
 
 type ObfuscateRequest struct {
-	// Source code as a string (mutually exclusive with SourceBase64)
-	Source string `json:"source,omitempty"`
-	// Base64-encoded source file (for binary-safe transport)
-	SourceBase64 string `json:"source_base64,omitempty"`
-	// File extension hint: "c" (default) or "cpp"
-	Lang string `json:"lang,omitempty"`
-	// Optional pass configuration (omit to use server defaults)
-	Config *PassConfig `json:"config,omitempty"`
+	Source       string      `json:"source,omitempty"`
+	SourceBase64 string      `json:"source_base64,omitempty"`
+	Lang         string      `json:"lang,omitempty"`
+	Config       *PassConfig `json:"config,omitempty"`
 }
 
 type ObfuscateResponse struct {
-	// Base64-encoded compiled binary
 	BinaryBase64 string `json:"binary_base64"`
-	// Human-readable compiler log
-	Log  string `json:"log"`
-	// Wall-clock duration
-	DurationMs int64  `json:"duration_ms"`
+	Log          string `json:"log"`
+	DurationMs   int64  `json:"duration_ms"`
 }
 
 type ErrorResponse struct {
@@ -89,15 +82,17 @@ type HealthResponse struct {
 }
 
 type ConfigResponse struct {
-	Default PassConfig `json:"default_config"`
+	DefaultConfig PassConfig `json:"default_config"`
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Globals ──────────────────────────────────────────────────────────────────
 
 var (
 	wrapperPath    string
 	defaultCfgPath string
 )
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 func jsonError(w http.ResponseWriter, status int, msg string, logOutput string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -119,7 +114,6 @@ func loadDefaultConfig() (*PassConfig, error) {
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
-// GET /health
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(HealthResponse{
@@ -129,7 +123,6 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /config
 func handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	cfg, err := loadDefaultConfig()
 	if err != nil {
@@ -137,21 +130,24 @@ func handleGetConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ConfigResponse{Default: *cfg})
+	json.NewEncoder(w).Encode(ConfigResponse{DefaultConfig: *cfg})
 }
 
-// POST /obfuscate
 func handleObfuscate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, 405, "method not allowed; use POST", "")
+		return
+	}
+
 	start := time.Now()
 
-	// Decode request
 	var req ObfuscateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonError(w, 400, "invalid JSON body: "+err.Error(), "")
 		return
 	}
 
-	// Resolve source code
+	// Resolve source
 	var srcBytes []byte
 	if req.Source != "" {
 		srcBytes = []byte(req.Source)
@@ -176,23 +172,22 @@ func handleObfuscate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a temp workspace
+	// Temp workspace
 	workDir, err := os.MkdirTemp("", "hideir-*")
 	if err != nil {
-		jsonError(w, 500, "failed to create temp dir", "")
+		jsonError(w, 500, "failed to create temp dir: "+err.Error(), "")
 		return
 	}
 	defer os.RemoveAll(workDir)
 
 	// Write source file
-	ext := "." + lang
-	srcPath := filepath.Join(workDir, "input"+ext)
+	srcPath := filepath.Join(workDir, "input."+lang)
 	if err := os.WriteFile(srcPath, srcBytes, 0644); err != nil {
 		jsonError(w, 500, "failed to write source: "+err.Error(), "")
 		return
 	}
 
-	// Write config file (custom or default)
+	// Write config (custom or default)
 	cfgPath := defaultCfgPath
 	if req.Config != nil {
 		cfgBytes, err := yaml.Marshal(req.Config)
@@ -207,30 +202,26 @@ func handleObfuscate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Output binary
 	outPath := filepath.Join(workDir, "output")
 
-	// Run compiler_wrapper via hideir's wrapper script with --skip-tests for speed
 	cmd := exec.Command(wrapperPath,
-		"-s",                    // skip pre-flight tests
+		"--skip-tests",
 		"-c", cfgPath,
 		srcPath,
 		"-o", outPath,
 	)
-	cmd.Env = append(os.Environ(),
-		"OBFUSCATOR_CONFIG="+cfgPath,
-	)
+	cmd.Env = append(os.Environ(), "OBFUSCATOR_CONFIG="+cfgPath)
 
 	var logBuf strings.Builder
 	cmd.Stdout = io.MultiWriter(os.Stdout, &logBuf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &logBuf)
 
 	if err := cmd.Run(); err != nil {
+		log.Printf("compilation error: %v\nlog:\n%s", err, logBuf.String())
 		jsonError(w, 422, "compilation failed: "+err.Error(), logBuf.String())
 		return
 	}
 
-	// Read binary
 	binBytes, err := os.ReadFile(outPath)
 	if err != nil {
 		jsonError(w, 500, "binary not found after compilation: "+err.Error(), logBuf.String())
@@ -245,6 +236,24 @@ func handleObfuscate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// methodRouter dispatches to the right handler based on HTTP method,
+// returning 405 JSON for wrong methods — compatible with Go 1.21 ServeMux.
+func methodRouter(handlers map[string]http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h, ok := handlers[r.Method]
+		if !ok {
+			allowed := make([]string, 0, len(handlers))
+			for m := range handlers {
+				allowed = append(allowed, m)
+			}
+			w.Header().Set("Allow", strings.Join(allowed, ", "))
+			jsonError(w, 405, "method not allowed", "")
+			return
+		}
+		h(w, r)
+	}
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 func main() {
@@ -256,18 +265,17 @@ func main() {
 	if defaultCfgPath == "" {
 		defaultCfgPath = "/hideir/orchestrator/config/default_config.yaml"
 	}
-
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", handleHealth)
-	mux.HandleFunc("GET /config", handleGetConfig)
-	mux.HandleFunc("POST /obfuscate", handleObfuscate)
+	mux.HandleFunc("/health",    methodRouter(map[string]http.HandlerFunc{"GET": handleHealth}))
+	mux.HandleFunc("/config",    methodRouter(map[string]http.HandlerFunc{"GET": handleGetConfig}))
+	mux.HandleFunc("/obfuscate", methodRouter(map[string]http.HandlerFunc{"POST": handleObfuscate}))
 
 	addr := fmt.Sprintf(":%s", port)
-	log.Printf("HideIR API listening on %s", addr)
+	log.Printf("HideIR API listening on %s  (wrapper=%s  config=%s)", addr, wrapperPath, defaultCfgPath)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }

@@ -1,12 +1,11 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Stage 1 – Build the LLVM passes + Go orchestrator + API server
+# Stage 1 – Build LLVM passes + Go orchestrator + API server
 # ──────────────────────────────────────────────────────────────────────────────
 FROM ubuntu:24.04 AS builder
 
-# Avoid interactive prompts from apt
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install build deps: LLVM/Clang 18, CMake, Go, and general utilities
+# Build deps: LLVM/Clang 18, CMake, curl (for Go download), build essentials
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         cmake \
@@ -15,20 +14,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         llvm-18-tools \
         lld-18 \
         libclang-18-dev \
-        golang-go \
-        git \
+        curl \
         ca-certificates \
         python3 \
     && ln -sf /usr/bin/clang-18   /usr/local/bin/clang \
     && ln -sf /usr/bin/clang++-18 /usr/local/bin/clang++ \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Go 1.22 (distro golang-go may be older)
+RUN curl -fsSL https://go.dev/dl/go1.22.4.linux-amd64.tar.gz \
+    | tar -C /usr/local -xz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
 WORKDIR /build
 
-# Copy the full project source
+# Copy full project
 COPY . /build/
 
-# ── 1a. Build the LLVM C++ passes ─────────────────────────────────────────────
+# ── 1a. Build LLVM C++ passes ─────────────────────────────────────────────────
 RUN mkdir -p /build/build \
     && cd /build/build \
     && cmake \
@@ -37,19 +40,19 @@ RUN mkdir -p /build/build \
         .. \
     && make -j"$(nproc)"
 
-# ── 1b. Build the Go orchestrator (compiler_wrapper) ──────────────────────────
+# Move .so plugins into a dedicated subdirectory
+RUN mkdir -p /build/build/plugins \
+    && find /build/build -maxdepth 1 -name "*.so" -exec mv {} /build/build/plugins/ \;
+
+# ── 1b. Build Go orchestrator (compiler_wrapper) ──────────────────────────────
 RUN cd /build/orchestrator \
     && go mod tidy \
     && go build -o /build/build/compiler_wrapper ./cmd/compiler_wrapper.go
 
-# Move the .so plugins next to compiler_wrapper so the wrapper can locate them
-RUN mkdir -p /build/build/plugins \
-    && find /build/build -maxdepth 1 -name "*.so" -exec mv {} /build/build/plugins/ \;
-
-# ── 1c. Build the REST API server ─────────────────────────────────────────────
+# ── 1c. Build REST API server ─────────────────────────────────────────────────
 RUN cd /build/api \
     && go mod tidy \
-    && CGO_ENABLED=0 go build -o /build/build/hideir-api .
+    && CGO_ENABLED=0 GOOS=linux go build -o /build/build/hideir-api .
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Stage 2 – Lean runtime image
@@ -58,41 +61,37 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Runtime deps only: clang (to actually compile user code) + binutils for strip/strings/nm
 RUN apt-get update && apt-get install -y --no-install-recommends \
         clang-18 \
         llvm-18 \
         binutils \
         libstdc++6 \
         ca-certificates \
+        wget \
     && ln -sf /usr/bin/clang-18   /usr/local/bin/clang \
     && ln -sf /usr/bin/clang++-18 /usr/local/bin/clang++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Gather everything under /hideir
 WORKDIR /hideir
 
-# Binaries & plugins from the build stage
+# Artifacts from build stage
 COPY --from=builder /build/build/compiler_wrapper  /hideir/build/compiler_wrapper
 COPY --from=builder /build/build/plugins/          /hideir/build/plugins/
 COPY --from=builder /build/build/hideir-api        /hideir/hideir-api
 
-# Shell wrapper script + configs needed at runtime
+# Shell wrapper + configs
 COPY --from=builder /build/hideir.sh               /hideir/hideir.sh
 COPY --from=builder /build/orchestrator/config/    /hideir/orchestrator/config/
 
 RUN chmod +x /hideir/hideir.sh /hideir/build/compiler_wrapper /hideir/hideir-api
 
-# ── Environment variables consumed by hideir.sh and the API ───────────────────
+# Let hideir.sh find the pre-built compiler_wrapper
+ENV PATH="/hideir/build:${PATH}"
 ENV HIDEIR_WRAPPER=/hideir/hideir.sh
 ENV HIDEIR_DEFAULT_CONFIG=/hideir/orchestrator/config/default_config.yaml
-# Let the wrapper find the pre-built compiler_wrapper binary
-ENV PATH="/hideir/build:${PATH}"
 
-# ── Expose API port ───────────────────────────────────────────────────────────
 EXPOSE 8080
 
-# ── Health-check ──────────────────────────────────────────────────────────────
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s \
     CMD wget -qO- http://localhost:8080/health || exit 1
 
